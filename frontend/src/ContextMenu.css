@@ -1,0 +1,37 @@
+.context-menu {
+  position: fixed;
+  background: #3c3c3c;
+  border: 1px solid #555;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 10000;
+  min-width: 160px;
+  padding: 4px 0;
+  font-size: 13px;
+  user-select: none;
+}
+
+.context-menu-item {
+  padding: 6px 16px;
+  cursor: pointer;
+  color: #cccccc;
+  display: flex;
+  align-items: center;
+  transition: background 0.15s ease;
+}
+
+.context-menu-item:hover:not(.disabled) {
+  background: #094771;
+  color: #ffffff;
+}
+
+.context-menu-item.disabled {
+  color: #666;
+  cursor: not-allowed;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: #555;
+  margin: 4px 0;
+}

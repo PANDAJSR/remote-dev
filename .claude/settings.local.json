@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(opencode --version:*)",
+      "Bash(echo:*)",
+      "Bash(opencode --help:*)",
+      "Bash(timeout 5 opencode:*)"
+    ]
+  }
+}

@@ -1,0 +1,154 @@
+.menubar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  background-color: #3c3c3c;
+  border-bottom: 1px solid #3e3e42;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 13px;
+  user-select: none;
+  position: relative;
+  z-index: 1000;
+}
+
+.menubar-brand {
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+}
+
+.menubar-brand-text {
+  color: #cccccc;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.menubar-menus {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.menubar-menu {
+  position: relative;
+}
+
+.menubar-menu-button {
+  background: transparent;
+  border: none;
+  color: #cccccc;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 24px;
+  transition: background-color 0.15s ease;
+  outline: none;
+}
+
+.menubar-menu-button:hover,
+.menubar-menu.active .menubar-menu-button {
+  background-color: #505050;
+  color: #ffffff;
+}
+
+.menubar-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  background-color: #3c3c3c;
+  border: 1px solid #5a5a5a;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  padding: 4px 0;
+  z-index: 1001;
+  animation: dropdownFadeIn 0.1s ease-out;
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.menubar-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 16px;
+  background: transparent;
+  border: none;
+  color: #cccccc;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.15s ease;
+  outline: none;
+}
+
+.menubar-dropdown-item:hover:not(.disabled) {
+  background-color: #094771;
+  color: #ffffff;
+}
+
+.menubar-dropdown-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.menubar-item-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menubar-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+  color: #cccccc;
+}
+
+.menubar-checkbox.checked {
+  color: #ffffff;
+}
+
+.menubar-item-shortcut {
+  color: #858585;
+  font-size: 12px;
+  margin-left: 24px;
+}
+
+.menubar-dropdown-item:hover:not(.disabled) .menubar-item-shortcut {
+  color: #a0a0a0;
+}
+
+.menubar-divider {
+  height: 1px;
+  background-color: #5a5a5a;
+  margin: 4px 0;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .menubar {
+    height: 40px;
+  }
+  
+  .menubar-menu-button {
+    padding: 8px 12px;
+  }
+  
+  .menubar-brand {
+    display: none;
+  }
+}

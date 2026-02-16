@@ -1,0 +1,209 @@
+.file-explorer {
+  height: 100%;
+  width: 100%;
+  background: #1e1e1e;
+  color: #cccccc;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-explorer-header {
+  padding: 8px 16px;
+  background: #252526;
+  border-bottom: 1px solid #3e3e42;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #bbbbbb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.header-btn {
+  background: transparent;
+  border: none;
+  color: #858585;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.header-btn:hover {
+  background: #3e3e42;
+  color: #cccccc;
+}
+
+.collapse-btn svg {
+  transform: rotate(180deg);
+}
+
+.file-explorer-content {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.file-explorer-content .rct-tree-root {
+  background: transparent;
+}
+
+.file-explorer-content .rct-tree-root > ul {
+  padding-left: 0;
+}
+
+.file-explorer-content ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.file-explorer-content li {
+  margin: 0;
+}
+
+.file-tree-item {
+  user-select: none;
+}
+
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 0 4px;
+}
+
+.file-tree-row:hover {
+  background: #2a2d2e;
+}
+
+.file-tree-item.focused .file-tree-row {
+  outline: none;
+}
+
+/* 移除选中状态的蓝色背景 */
+.file-tree-item.selected .file-tree-row {
+  background: transparent;
+}
+
+.file-tree-item.selected .file-tree-row:hover {
+  background: #2a2d2e;
+}
+
+.file-tree-arrow {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.arrow-icon {
+  font-size: 10px;
+  color: #858585;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+
+.arrow-icon.expanded {
+  transform: rotate(90deg);
+}
+
+.file-tree-icon {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.folder-icon {
+  width: 16px;
+  height: 16px;
+  color: #dcb67a;
+}
+
+.file-icon {
+  width: 16px;
+  height: 16px;
+  color: #519aba;
+}
+
+.file-tree-label {
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loading,
+.error {
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #858585;
+}
+
+.error {
+  color: #f48771;
+}
+
+/* Hide default tree item rendering from react-complex-tree */
+.file-explorer-content .rct-tree-item-title {
+  display: none;
+}
+
+.file-explorer-content .rct-tree-item-button {
+  display: none;
+}
+
+.file-explorer-content .rct-tree-focusable:focus {
+  outline: none;
+}
+
+/* 覆盖 react-complex-tree 默认的选中样式 */
+.file-explorer-content .rct-tree-item-li-selected .file-tree-row,
+.file-explorer-content .rct-tree-item-button-selected {
+  background: transparent !important;
+}
+
+.file-explorer-content .rct-tree-item-li-selected .file-tree-row:hover {
+  background: #2a2d2e !important;
+}
+
+/* Scrollbar styling */
+.file-explorer-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.file-explorer-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-explorer-content::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 4px;
+}
+
+.file-explorer-content::-webkit-scrollbar-thumb:hover {
+  background: #4f4f4f;
+}
