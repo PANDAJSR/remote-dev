@@ -10,6 +10,43 @@ import 'react-complex-tree/lib/style-modern.css';
 import './FileExplorer.css';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
+// 文件变更事件类型
+interface FileChangeEvent {
+  event: 'created' | 'modified' | 'deleted' | 'renamed';
+  path: string;
+  name: string;
+  is_directory?: boolean;
+  old_path?: string;
+  new_path?: string;
+}
+
+// WebSocket 消息类型
+interface FileWatchMessage {
+  type: 'file_change';
+  event: FileChangeEvent['event'];
+  path: string;
+  name: string;
+  is_directory?: boolean;
+  old_path?: string;
+  new_path?: string;
+}
+
+// 标准化路径（统一使用正斜杠，并确保一致性）
+const normalizePath = (path: string): string => {
+  return path.replace(/\\/g, '/');
+};
+
+// 路径比较（Windows 上不区分大小写）
+const pathsEqual = (path1: string, path2: string): boolean => {
+  const normalized1 = normalizePath(path1);
+  const normalized2 = normalizePath(path2);
+  // Windows 路径不区分大小写
+  if (window.navigator.platform.toLowerCase().includes('win')) {
+    return normalized1.toLowerCase() === normalized2.toLowerCase();
+  }
+  return normalized1 === normalized2;
+};
+
 interface FileEntry {
   name: string;
   path: string;
@@ -68,18 +105,37 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
     itemId: null,
   });
 
+  // WebSocket 状态
+  const [wsConnected, setWsConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsConnectingRef = useRef<boolean>(false);
+  const wsIntentionalCloseRef = useRef<boolean>(false);
+  const wsAttemptRef = useRef<number>(0);
+  const subscribedPathsRef = useRef<Set<string>>(new Set());
+  const WS_RECONNECT_DELAY = 3000;
+
+  // 发送订阅请求到后端
+  const subscribeToPath = useCallback((path: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && !subscribedPathsRef.current.has(path)) {
+      wsRef.current.send(JSON.stringify({ path }));
+      subscribedPathsRef.current.add(path);
+      console.log('Subscribed to path:', path);
+    }
+  }, []);
+
   // 加载文件树
   const loadTree = useCallback(async (customPath?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const url = customPath 
+      const url = customPath
         ? `/api/tree?path=${encodeURIComponent(customPath)}`
         : '/api/tree';
       const response = await fetch(url);
       const data: FileEntry = await response.json();
       const newItems: Record<TreeItemIndex, FileTreeItem> = {};
-      
+
       const loadEntry = (entry: FileEntry, parentId: string): string => {
         const id = parentId ? `${parentId}/${entry.name}` : 'root';
         const children: string[] = [];
@@ -100,7 +156,7 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
         };
         return id;
       };
-      
+
       loadEntry(data, '');
       itemsRef.current = newItems;
       setItems(newItems);
@@ -110,11 +166,433 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
       setFocusedItem('root');
       setExpandedItems(['root']);
       setSelectedItems([]);
+
+      // 订阅新加载的路径以接收文件变更通知
+      const rootPath = newItems['root']?.path;
+      if (rootPath) {
+        subscribeToPath(rootPath);
+      }
     } catch (err: any) {
       console.error('Error fetching directory tree:', err);
       setError(err.message);
       setLoading(false);
     }
+  }, [subscribeToPath]);
+
+  // 检查路径是否在当前文件树范围内
+  const isPathInCurrentTree = useCallback((filePath: string): boolean => {
+    const rootPath = rootPathRef.current;
+    if (!rootPath) return false;
+
+    const normalizedFilePath = normalizePath(filePath);
+    const normalizedRootPath = normalizePath(rootPath);
+
+    // 处理 Windows 根路径特殊情况：当前端显示的是 "/"（Windows 驱动器根目录）时，
+    // 后端返回的文件路径可能是 "D:/..." 完整路径格式
+    // 这种情况下，任何绝对路径都应该被认为在当前树范围内
+    if (normalizedRootPath === '/' || normalizedRootPath.match(/^[A-Za-z]:$/)) {
+      // 如果是根路径，检查文件路径是否是绝对路径（Windows: D:/... 或 Unix: /...）
+      return normalizedFilePath.startsWith('/') ||
+             /^[A-Za-z]:/.test(normalizedFilePath);
+    }
+
+    // 文件路径应该是根路径的子路径
+    return normalizedFilePath.startsWith(normalizedRootPath + '/') ||
+           normalizedFilePath === normalizedRootPath;
+  }, []);
+
+  // 处理文件创建事件
+  const handleFileCreated = useCallback((path: string, name: string, isDirectory: boolean) => {
+    // 标准化传入的路径
+    const normalizedFilePath = normalizePath(path);
+    console.log('handleFileCreated - path:', path, 'normalized:', normalizedFilePath, 'name:', name);
+
+    // 检查文件是否在当前显示的文件树范围内
+    if (!isPathInCurrentTree(normalizedFilePath)) {
+      console.log('File created outside current tree, ignoring:', normalizedFilePath);
+      return;
+    }
+
+    // 查找父目录（只查找已加载的，不动态创建）
+    const lastSlashIndex = normalizedFilePath.lastIndexOf('/');
+    const parentPath = lastSlashIndex > 0 ? normalizedFilePath.substring(0, lastSlashIndex) : '';
+    let parentId: string | null = null;
+    
+    if (!parentPath) {
+      parentId = 'root';
+    } else {
+      // 查找已加载的父目录
+      for (const [id, item] of Object.entries(itemsRef.current)) {
+        if (pathsEqual(item.path, parentPath)) {
+          parentId = id;
+          break;
+        }
+      }
+    }
+    
+    if (!parentId) {
+      console.log('Parent directory not loaded, skipping created file:', normalizedFilePath);
+      return;
+    }
+    
+    // 检查父目录是否已展开（有 children 属性）
+    let parentItem = itemsRef.current[parentId];
+    if (!parentItem || (!parentItem.children && parentId !== 'root')) {
+      console.log('Parent directory not expanded, skipping created file:', normalizedFilePath);
+      return;
+    }
+
+    const newId = `${parentId}/${name}`;
+
+    // 检查是否已存在
+    if (itemsRef.current[newId]) {
+      console.log('Item already exists:', newId);
+      return;
+    }
+
+    const newItems = { ...itemsRef.current };
+
+    // 添加新项 - 使用标准化路径
+    newItems[newId] = {
+      index: newId,
+      data: name,
+      path: normalizedFilePath,
+      isFolder: isDirectory,
+      children: isDirectory ? [] : undefined,
+      canMove: false,
+      canRename: !isDirectory,
+    };
+    console.log('Created new item:', newId, 'with path:', normalizedFilePath);
+
+    // 更新父目录的 children
+    parentItem = newItems[parentId];
+    if (parentItem) {
+      const existingChildren = parentItem.children || [];
+      // 按文件夹优先、字母顺序插入
+      const insertIndex = existingChildren.findIndex(childId => {
+        const child = newItems[childId];
+        if (!child) return false;
+        if (isDirectory && !child.isFolder) return true;
+        if (!isDirectory && child.isFolder) return false;
+        return child.data.localeCompare(name) > 0;
+      });
+
+      if (insertIndex === -1) {
+        newItems[parentId] = {
+          ...parentItem,
+          children: [...existingChildren, newId],
+        };
+      } else {
+        const newChildren = [...existingChildren];
+        newChildren.splice(insertIndex, 0, newId);
+        newItems[parentId] = {
+          ...parentItem,
+          children: newChildren,
+        };
+      }
+    }
+
+    itemsRef.current = newItems;
+    setItems(newItems);
+  }, [isPathInCurrentTree]);
+
+  // 处理文件删除事件
+  const handleFileDeleted = useCallback((path: string, _name: string) => {
+    // 查找对应的项 ID（使用标准化路径比较）
+    const normalizedTargetPath = normalizePath(path);
+    console.log('handleFileDeleted - path:', path, 'normalized:', normalizedTargetPath);
+
+    // 检查文件是否在当前显示的文件树范围内
+    if (!isPathInCurrentTree(normalizedTargetPath)) {
+      console.log('File deleted outside current tree, ignoring:', normalizedTargetPath);
+      return;
+    }
+
+    let itemIdToDelete: string | null = null;
+    for (const [id, item] of Object.entries(itemsRef.current)) {
+      if (pathsEqual(item.path, normalizedTargetPath)) {
+        itemIdToDelete = id;
+        break;
+      }
+    }
+
+    if (!itemIdToDelete) {
+      console.log('Item not found for deletion:', normalizedTargetPath);
+      console.log('Available paths:', Object.entries(itemsRef.current).map(([id, item]) => `${id}: ${item.path}`).join(', '));
+      return;
+    }
+    console.log('Found item to delete:', itemIdToDelete);
+
+    const newItems = { ...itemsRef.current };
+
+    // 从父目录的 children 中移除
+    const parentId = itemIdToDelete.substring(0, itemIdToDelete.lastIndexOf('/')) || 'root';
+    const parentItem = newItems[parentId];
+    if (parentItem && parentItem.children) {
+      newItems[parentId] = {
+        ...parentItem,
+        children: parentItem.children.filter(id => id !== itemIdToDelete),
+      };
+    }
+
+    // 删除该项及其所有子项
+    const deleteRecursively = (id: string) => {
+      const item = newItems[id];
+      if (item?.children) {
+        item.children.forEach(childId => deleteRecursively(String(childId)));
+      }
+      delete newItems[id];
+    };
+    deleteRecursively(itemIdToDelete);
+
+    itemsRef.current = newItems;
+    setItems(newItems);
+
+    // 如果被删除的项是当前选中的，重置选中状态
+    if (selectedItems.includes(itemIdToDelete)) {
+      setSelectedItems(prev => prev.filter(id => id !== itemIdToDelete));
+    }
+    if (focusedItem === itemIdToDelete) {
+      setFocusedItem('root');
+    }
+  }, [selectedItems, focusedItem, isPathInCurrentTree]);
+
+  // 处理文件重命名事件
+  const handleFileRenamed = useCallback((oldPath: string, newPath: string, name: string, _isDirectory?: boolean) => {
+    // 查找旧路径对应的项（使用标准化路径比较）
+    const normalizedOldPath = normalizePath(oldPath);
+    const normalizedNewPath = normalizePath(newPath);
+    console.log('handleFileRenamed - oldPath:', oldPath, 'newPath:', newPath);
+    console.log('normalized - old:', normalizedOldPath, 'new:', normalizedNewPath);
+
+    // 检查文件是否在当前显示的文件树范围内
+    if (!isPathInCurrentTree(normalizedOldPath) && !isPathInCurrentTree(normalizedNewPath)) {
+      console.log('File renamed outside current tree, ignoring:', normalizedOldPath, '->', normalizedNewPath);
+      return;
+    }
+
+    let oldItemId: string | null = null;
+    for (const [id, item] of Object.entries(itemsRef.current)) {
+      if (pathsEqual(item.path, normalizedOldPath)) {
+        oldItemId = id;
+        break;
+      }
+    }
+
+    if (!oldItemId) {
+      console.log('Item not found for rename:', normalizedOldPath);
+      return;
+    }
+    console.log('Found item to rename:', oldItemId);
+
+    const newItems = { ...itemsRef.current };
+    const oldItem = newItems[oldItemId];
+
+    // 生成新的 ID
+    const parentId = oldItemId.substring(0, oldItemId.lastIndexOf('/')) || 'root';
+    const newId = `${parentId}/${name}`;
+
+    // 更新项的 ID 和路径
+    newItems[newId] = {
+      ...oldItem,
+      index: newId,
+      data: name,
+      path: normalizedNewPath,
+    };
+
+    // 更新父目录的 children
+    const parentItem = newItems[parentId];
+    if (parentItem && parentItem.children) {
+      newItems[parentId] = {
+        ...parentItem,
+        children: parentItem.children.map(id => id === oldItemId ? newId : id),
+      };
+    }
+
+    // 递归更新所有子项的路径
+    const updateChildrenPaths = (oldParentId: string, newParentId: string, oldBasePath: string, newBasePath: string) => {
+      const parent = newItems[oldParentId];
+      if (!parent?.children) return;
+
+      parent.children.forEach(childId => {
+        const childIdStr = String(childId);
+        const child = newItems[childIdStr];
+        if (child) {
+          const newChildPath = child.path.replace(oldBasePath, newBasePath);
+          const newChildId = childIdStr.replace(oldParentId, newParentId);
+
+          newItems[newChildId] = {
+            ...child,
+            index: newChildId,
+            path: newChildPath,
+          };
+
+          delete newItems[childIdStr];
+
+          // 递归更新子项
+          updateChildrenPaths(childIdStr, newChildId, oldBasePath, newBasePath);
+        }
+      });
+    };
+
+    if (oldItem.isFolder) {
+      updateChildrenPaths(oldItemId, newId, normalizedOldPath, normalizedNewPath);
+    }
+
+    // 删除旧 ID
+    delete newItems[oldItemId];
+
+    itemsRef.current = newItems;
+    setItems(newItems);
+
+    // 更新选中状态
+    if (selectedItems.includes(oldItemId)) {
+      setSelectedItems(prev => prev.map(id => id === oldItemId ? newId : id));
+    }
+    if (focusedItem === oldItemId) {
+      setFocusedItem(newId);
+    }
+  }, [selectedItems, focusedItem, isPathInCurrentTree]);
+
+  // 处理 WebSocket 消息
+  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+    try {
+      const data: FileWatchMessage = JSON.parse(event.data);
+
+      if (data.type === 'file_change') {
+        console.log('File change event:', data);
+
+        switch (data.event) {
+          case 'created':
+            handleFileCreated(data.path, data.name, data.is_directory || false);
+            break;
+          case 'deleted':
+            handleFileDeleted(data.path, data.name);
+            break;
+          case 'renamed':
+            if (data.old_path && data.new_path) {
+              handleFileRenamed(data.old_path, data.new_path, data.name, data.is_directory);
+            }
+            break;
+          case 'modified':
+            // 文件内容修改，不需要更新文件树结构
+            console.log('File modified:', data.path);
+            break;
+        }
+      }
+    } catch (err) {
+      console.error('Error parsing WebSocket message:', err);
+    }
+  }, [handleFileCreated, handleFileDeleted, handleFileRenamed]);
+
+  // 建立 WebSocket 连接
+  const connectWebSocket = useCallback(() => {
+    // 防止重复连接
+    if (wsConnectingRef.current || (wsRef.current?.readyState === WebSocket.CONNECTING)) {
+      console.log('WebSocket connection already in progress, skipping');
+      return;
+    }
+
+    // 如果已有连接，不要重复连接
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log('WebSocket already connected');
+      return;
+    }
+
+    // 清理之前的连接
+    if (wsRef.current) {
+      wsIntentionalCloseRef.current = true;
+      wsRef.current.close();
+    }
+
+    if (wsReconnectTimeoutRef.current) {
+      clearTimeout(wsReconnectTimeoutRef.current);
+      wsReconnectTimeoutRef.current = null;
+    }
+
+    wsConnectingRef.current = true;
+    wsIntentionalCloseRef.current = false;
+
+    // 判断使用哪个 WebSocket URL
+    // 第1次尝试：使用相对路径（通过 Vite 代理，适用于 localhost 访问）
+    // 第2次尝试：直接连接后端 3000 端口（适用于 IP 访问开发服务器）
+    const attempt = wsAttemptRef.current % 2;
+    let wsUrl: string;
+
+    if (attempt === 0) {
+      // 相对路径，通过 Vite 代理
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${protocol}//${window.location.host}/ws/files`;
+    } else {
+      // 直接连接后端端口
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const hostname = window.location.hostname;
+      wsUrl = `${protocol}//${hostname}:3000/ws/files`;
+    }
+
+    console.log(`Connecting to WebSocket (attempt ${attempt + 1}):`, wsUrl);
+    wsAttemptRef.current++;
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      setWsConnected(true);
+      wsConnectingRef.current = false;
+      wsAttemptRef.current = 0; // 重置尝试计数
+
+      // 清空之前的订阅记录，只订阅当前根路径
+      // 避免在切换目录后收到旧目录路径的文件变更事件
+      subscribedPathsRef.current.clear();
+
+      // 订阅当前根路径
+      if (rootPathRef.current) {
+        subscribeToPath(rootPathRef.current);
+      }
+    };
+
+    ws.onmessage = handleWebSocketMessage;
+
+    ws.onclose = (event) => {
+      console.log('WebSocket disconnected, code:', event.code, 'intentional:', wsIntentionalCloseRef.current);
+      setWsConnected(false);
+      wsConnectingRef.current = false;
+      wsRef.current = null;
+
+      // 如果是预期的关闭（组件卸载），不重连
+      if (wsIntentionalCloseRef.current) {
+        console.log('Intentional close, not reconnecting');
+        return;
+      }
+
+      // 自动重连
+      wsReconnectTimeoutRef.current = setTimeout(() => {
+        console.log('Attempting to reconnect WebSocket...');
+        connectWebSocket();
+      }, WS_RECONNECT_DELAY);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      wsConnectingRef.current = false;
+    };
+
+    wsRef.current = ws;
+  }, [handleWebSocketMessage]);
+
+  // 断开 WebSocket 连接
+  const disconnectWebSocket = useCallback(() => {
+    wsIntentionalCloseRef.current = true;
+    if (wsReconnectTimeoutRef.current) {
+      clearTimeout(wsReconnectTimeoutRef.current);
+      wsReconnectTimeoutRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setWsConnected(false);
+    wsConnectingRef.current = false;
   }, []);
 
   // 创建新文件功能
@@ -248,6 +726,15 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
   useEffect(() => {
     loadTree();
   }, [loadTree]);
+
+  // WebSocket 连接管理
+  useEffect(() => {
+    connectWebSocket();
+
+    return () => {
+      disconnectWebSocket();
+    };
+  }, [connectWebSocket, disconnectWebSocket]);
 
   // 监听快捷键
   useEffect(() => {
@@ -719,6 +1206,9 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
       <div className="file-explorer">
         <div className="file-explorer-header">
           <span>文件</span>
+          <div className="ws-status" title={wsConnected ? '实时同步已连接' : '实时同步已断开'}>
+            <span className={`ws-indicator ${wsConnected ? 'connected' : 'disconnected'}`}></span>
+          </div>
           <div className="header-actions">
             <button
               className="header-btn"
@@ -727,6 +1217,15 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
             >
               <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
                 <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+              </svg>
+            </button>
+            <button
+              className="header-btn"
+              onClick={() => createNewFolder()}
+              title="新建文件夹 (Ctrl+Shift+N)"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
               </svg>
             </button>
             <button
@@ -752,6 +1251,9 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
       <div className="file-explorer">
         <div className="file-explorer-header">
           <span>文件</span>
+          <div className="ws-status" title={wsConnected ? '实时同步已连接' : '实时同步已断开'}>
+            <span className={`ws-indicator ${wsConnected ? 'connected' : 'disconnected'}`}></span>
+          </div>
           <div className="header-actions">
             <button
               className="header-btn"
@@ -760,6 +1262,15 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
             >
               <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
                 <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+              </svg>
+            </button>
+            <button
+              className="header-btn"
+              onClick={() => createNewFolder()}
+              title="新建文件夹 (Ctrl+Shift+N)"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
               </svg>
             </button>
             <button
@@ -786,6 +1297,9 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
       <div className="file-explorer">
       <div className="file-explorer-header">
         <span>文件</span>
+        <div className="ws-status" title={wsConnected ? '实时同步已连接' : '实时同步已断开'}>
+          <span className={`ws-indicator ${wsConnected ? 'connected' : 'disconnected'}`}></span>
+        </div>
         <div className="header-actions">
           <button
             className="header-btn"
@@ -794,6 +1308,15 @@ const FileExplorer = forwardRef<FileExplorerRef, FileExplorerProps>(({ onFileOpe
           >
             <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
               <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+            </svg>
+          </button>
+          <button
+            className="header-btn"
+            onClick={() => createNewFolder()}
+            title="新建文件夹 (Ctrl+Shift+N)"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/>
             </svg>
           </button>
           <button

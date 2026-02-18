@@ -21,6 +21,28 @@
   align-items: center;
 }
 
+.ws-status {
+  display: flex;
+  align-items: center;
+  margin-left: 8px;
+}
+
+.ws-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: background-color 0.3s ease;
+}
+
+.ws-indicator.connected {
+  background-color: #4caf50;
+  box-shadow: 0 0 4px rgba(76, 175, 80, 0.5);
+}
+
+.ws-indicator.disconnected {
+  background-color: #757575;
+}
+
 .header-actions {
   display: flex;
   gap: 4px;

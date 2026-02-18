@@ -11,6 +11,7 @@ import TerminalPage from './Terminal';
 import FileExplorer, { FileExplorerRef } from './FileExplorer';
 import EditorPanel from './EditorPanel';
 import MenuBar from './MenuBar';
+import RemoteDesktopPanel from './RemoteDesktop';
 
 // 终端面板组件
 const TerminalPanel = () => {
@@ -35,6 +36,15 @@ const EditorPanelWrapper = (props: IDockviewPanelProps<{ filePath: string; fileN
   );
 };
 
+// 远程桌面面板组件
+const RemoteDesktopPanelWrapper = () => {
+  return (
+    <div className="remote-desktop-panel-wrapper" style={{ height: '100%', width: '100%' }}>
+      <RemoteDesktopPanel params={{}} />
+    </div>
+  );
+};
+
 const DockviewApp = () => {
   const apiRef = useRef<DockviewApi | null>(null);
   const openEditorsRef = useRef<Set<string>>(new Set());
@@ -53,7 +63,7 @@ const DockviewApp = () => {
     event.api.addPanel({
       id: 'fileExplorer',
       component: 'fileExplorer',
-      title: '文件',
+      title: '文件管理',
     });
 
     // 添加终端面板（右侧/主区域）
@@ -61,6 +71,14 @@ const DockviewApp = () => {
       id: 'terminal',
       component: 'terminal',
       title: '终端',
+    });
+
+    // 添加远程桌面面板
+    event.api.addPanel({
+      id: 'remote-desktop',
+      component: 'remoteDesktop',
+      title: '远程桌面',
+      position: { referencePanel: 'terminal', direction: 'right' },
     });
   }, []);
 
@@ -146,6 +164,7 @@ const DockviewApp = () => {
       terminal: TerminalPanel,
       editor: EditorPanelWrapper,
       fileExplorer: FileExplorerPanelWithCallback,
+      remoteDesktop: RemoteDesktopPanelWrapper,
     }),
     [FileExplorerPanelWithCallback]
   );

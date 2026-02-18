@@ -13,3 +13,33 @@ portable-pty = "0.9"
 futures = "0.3"
 tokio-util = "0.7"
 bytes = "1.5"
+notify = "7.0"
+anyhow = "1.0"
+
+# WebRTC 和远程桌面
+webrtc = "0.12"
+webrtc-media = "0.8"
+rtp = "0.12"
+
+# 屏幕捕获 - 使用 scrap 因为它更稳定
+scrap = "0.5"
+
+# 输入模拟
+enigo = "0.3"
+
+# 图像处理
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# 视频编码 - H.264 (openh264在Windows上更容易配置)
+openh264 = "0.9"
+
+# 颜色空间转换
+yuv = "0.8"
+
+# 异步 trait
+async-trait = "0.1"
+
+# 并发工具
+parking_lot = "0.12"
+uuid = { version = "1.10", features = ["v4"] }
+once_cell = "1.20"
