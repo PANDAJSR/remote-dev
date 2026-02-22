@@ -64,8 +64,8 @@ async fn handle_rdp_socket(mut socket: WebSocket) {
         }
     };
 
-    // 创建帧处理管道
-    let (_capture, mut frame_receiver) = match create_frame_pipeline(30, 2000000) {
+    // 创建帧处理管道 - 使用优化的15 FPS和降低的比特率
+    let (_capture, mut frame_receiver) = match create_frame_pipeline(15, 1500000).await {
         Ok((c, r)) => (c, r),
         Err(e) => {
             eprintln!("Failed to create frame pipeline: {}", e);

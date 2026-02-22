@@ -1,0 +1,352 @@
+warning: unnecessary parentheses around assigned value
+   --> backend\src\rdp\capture.rs:131:25
+    |
+131 |             let b_avg = ((bgra[idx00] as i32 + bgra[idx01] as i32 + 
+    |                         ^
+132 |                          bgra[idx10] as i32 + bgra[idx11] as i32) >> 2);
+    |                                                                       ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+131 ~             let b_avg = (bgra[idx00] as i32 + bgra[idx01] as i32 + 
+132 ~                          bgra[idx10] as i32 + bgra[idx11] as i32) >> 2 ;
+    |
+
+warning: unnecessary parentheses around assigned value
+   --> backend\src\rdp\capture.rs:133:25
+    |
+133 |             let g_avg = ((bgra[idx00 + 1] as i32 + bgra[idx01 + 1] as i32 + 
+    |                         ^
+134 |                          bgra[idx10 + 1] as i32 + bgra[idx11 + 1] as i32) >> 2);
+    |                                                                               ^
+    |
+help: remove these parentheses
+    |
+133 ~             let g_avg = (bgra[idx00 + 1] as i32 + bgra[idx01 + 1] as i32 + 
+134 ~                          bgra[idx10 + 1] as i32 + bgra[idx11 + 1] as i32) >> 2 ;
+    |
+
+warning: unnecessary parentheses around assigned value
+   --> backend\src\rdp\capture.rs:135:25
+    |
+135 |             let r_avg = ((bgra[idx00 + 2] as i32 + bgra[idx01 + 2] as i32 + 
+    |                         ^
+136 |                          bgra[idx10 + 2] as i32 + bgra[idx11 + 2] as i32) >> 2);
+    |                                                                               ^
+    |
+help: remove these parentheses
+    |
+135 ~             let r_avg = (bgra[idx00 + 2] as i32 + bgra[idx01 + 2] as i32 + 
+136 ~                          bgra[idx10 + 2] as i32 + bgra[idx11 + 2] as i32) >> 2 ;
+    |
+
+warning: unnecessary parentheses around assigned value
+   --> backend\src\rdp\capture.rs:754:20
+    |
+754 |     let stripe_y = ((frame_count as usize * 5) % height);
+    |                    ^                                   ^
+    |
+help: remove these parentheses
+    |
+754 -     let stripe_y = ((frame_count as usize * 5) % height);
+754 +     let stripe_y = (frame_count as usize * 5) % height ;
+    |
+
+warning: unused import: `openh264::formats::YUVSource`
+   --> backend\src\rdp\capture.rs:882:13
+    |
+882 |         use openh264::formats::YUVSource;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `mpsc`
+ --> backend\src\ws\rdp.rs:8:19
+  |
+8 | use tokio::sync::{mpsc, Mutex};
+  |                   ^^^^
+
+warning: variable does not need to be mutable
+   --> backend\src\rdp\webrtc.rs:305:13
+    |
+305 |         let mut timestamp = std::time::Instant::now();
+    |             ----^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> backend\src\ws\rdp.rs:106:37
+    |
+106 | ...                   let mut session = session.lock().await;
+    |                           ----^^^^^^^
+    |                           |
+    |                           help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> backend\src\ws\rdp.rs:111:37
+    |
+111 | ...                   let mut session = session.lock().await;
+    |                           ----^^^^^^^
+    |                           |
+    |                           help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> backend\src\ws\rdp.rs:46:28
+   |
+46 | async fn handle_rdp_socket(mut socket: WebSocket) {
+   |                            ----^^^^^^
+   |                            |
+   |                            help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> backend\src\rdp\capture.rs:589:31
+    |
+589 |                     let Some((mut capturer, cap_width, cap_height)) = capturer_result else {
+    |                               ----^^^^^^^^
+    |                               |
+    |                               help: remove this `mut`
+
+warning: unused variable: `capture_width`
+   --> backend\src\rdp\capture.rs:549:21
+    |
+549 |                 let capture_width = self.capture_width;
+    |                     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_capture_width`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `capture_height`
+   --> backend\src\rdp\capture.rs:550:21
+    |
+550 |                 let capture_height = self.capture_height;
+    |                     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_capture_height`
+
+warning: variable `frame_count` is assigned to, but never used
+   --> backend\src\rdp\capture.rs:665:17
+    |
+665 |             let mut frame_count = 0u32;
+    |                 ^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_frame_count` instead
+
+warning: value assigned to `frame_count` is never read
+   --> backend\src\rdp\capture.rs:678:25
+    |
+678 |                         frame_count += 1;
+    |                         ^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `timestamp`
+   --> backend\src\rdp\webrtc.rs:305:13
+    |
+305 |         let mut timestamp = std::time::Instant::now();
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timestamp`
+
+warning: unused variable: `start_time`
+   --> backend\src\rdp\webrtc.rs:306:13
+    |
+306 |         let start_time = std::time::Instant::now();
+    |             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_start_time`
+
+warning: unused variable: `preview`
+   --> backend\src\rdp\webrtc.rs:351:33
+    |
+351 | ...                   let preview: Vec<u8> = encoded_data.iter().take(16).cloned().collect();
+    |                           ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_preview`
+
+warning: unused variable: `total_time`
+   --> backend\src\rdp\webrtc.rs:423:13
+    |
+423 |         let total_time = std::time::Instant::now();
+    |             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_total_time`
+
+warning: field `timestamp` is never read
+  --> backend\src\rdp\capture.rs:11:9
+   |
+ 7 | pub struct CapturedFrame {
+   |            ------------- field in this struct
+...
+11 |     pub timestamp: Instant,
+   |         ^^^^^^^^^
+   |
+   = note: `CapturedFrame` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_CAPTURE_WIDTH` is never used
+   --> backend\src\rdp\capture.rs:156:7
+    |
+156 | const DEFAULT_CAPTURE_WIDTH: usize = 1920;
+    |       ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `DEFAULT_CAPTURE_HEIGHT` is never used
+   --> backend\src\rdp\capture.rs:157:7
+    |
+157 | const DEFAULT_CAPTURE_HEIGHT: usize = 1080;
+    |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `DEFAULT_TARGET_FPS` is never used
+   --> backend\src\rdp\capture.rs:163:7
+    |
+163 | const DEFAULT_TARGET_FPS: u32 = 30;
+    |       ^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_TARGET_FPS` is never used
+   --> backend\src\rdp\capture.rs:164:7
+    |
+164 | const MAX_TARGET_FPS: u32 = 30;
+    |       ^^^^^^^^^^^^^^
+
+warning: method `start_real_capture` is never used
+   --> backend\src\rdp\capture.rs:614:8
+    |
+427 | impl ScreenCapture {
+    | ------------------ method in this implementation
+...
+614 |     fn start_real_capture(&self, sender: mpsc::Sender<CapturedFrame>, target_fps: u32) {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: trait `VideoEncoder` is never used
+   --> backend\src\rdp\capture.rs:769:11
+    |
+769 | pub trait VideoEncoder: Send + Sync {
+    |           ^^^^^^^^^^^^
+
+warning: struct `SimpleFrameEncoder` is never constructed
+   --> backend\src\rdp\capture.rs:775:12
+    |
+775 | pub struct SimpleFrameEncoder {
+    |            ^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new` and `encode_frame` are never used
+   --> backend\src\rdp\capture.rs:781:12
+    |
+780 | impl SimpleFrameEncoder {
+    | ----------------------- associated items in this implementation
+781 |     pub fn new(bitrate: u32) -> Self {
+    |            ^^^
+...
+789 |     pub fn encode_frame(&mut self, frame: &CapturedFrame) -> anyhow::Result<Vec<u8>> {
+    |            ^^^^^^^^^^^^
+
+warning: methods `dimensions`, `width`, and `height` are never used
+   --> backend\src\rdp\capture.rs:957:12
+    |
+822 | impl Vp8Encoder {
+    | --------------- methods in this implementation
+...
+957 |     pub fn dimensions(&self) -> (usize, usize) {
+    |            ^^^^^^^^^^
+...
+962 |     pub fn width(&self) -> usize {
+    |            ^^^^^
+...
+967 |     pub fn height(&self) -> usize {
+    |            ^^^^^^
+
+warning: function `create_frame_pipeline` is never used
+    --> backend\src\rdp\capture.rs:1004:8
+     |
+1004 | pub fn create_frame_pipeline(
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `InputEvent` is never used
+  --> backend\src\rdp\input.rs:12:10
+   |
+12 | pub enum InputEvent {
+   |          ^^^^^^^^^^
+
+warning: enum `MouseButton` is never used
+  --> backend\src\rdp\input.rs:37:10
+   |
+37 | pub enum MouseButton {
+   |          ^^^^^^^^^^^
+
+warning: enum `ClickAction` is never used
+  --> backend\src\rdp\input.rs:45:10
+   |
+45 | pub enum ClickAction {
+   |          ^^^^^^^^^^^
+
+warning: enum `ModifierKey` is never used
+  --> backend\src\rdp\input.rs:53:10
+   |
+53 | pub enum ModifierKey {
+   |          ^^^^^^^^^^^
+
+warning: struct `InputController` is never constructed
+  --> backend\src\rdp\input.rs:61:12
+   |
+61 | pub struct InputController {
+   |            ^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `handle_event`, and `parse_key` are never used
+   --> backend\src\rdp\input.rs:68:12
+    |
+ 67 | impl InputController {
+    | -------------------- associated items in this implementation
+ 68 |     pub fn new(screen_width: u32, screen_height: u32) -> anyhow::Result<Self> {
+    |            ^^^
+...
+ 80 |     pub fn handle_event(&self, event: InputEvent) -> anyhow::Result<()> {
+    |            ^^^^^^^^^^^^
+...
+158 |     fn parse_key(key_str: &str) -> Option<Key> {
+    |        ^^^^^^^^^
+
+warning: function `create_signaling_router` is never used
+   --> backend\src\rdp\signaling.rs:310:8
+    |
+310 | pub fn create_signaling_router(state: Arc<SignalingState>) -> Router {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `id` and `video_track` are never read
+  --> backend\src\rdp\webrtc.rs:87:9
+   |
+86 | pub struct RdpSession {
+   |            ---------- fields in this struct
+87 |     pub id: String,
+   |         ^^
+88 |     pub peer_connection: Arc<RTCPeerConnection>,
+89 |     video_track: Arc<TrackLocalStaticSample>,
+   |     ^^^^^^^^^^^
+
+warning: enum `RdpWsMessage` is never used
+  --> backend\src\ws\rdp.rs:16:6
+   |
+16 | enum RdpWsMessage {
+   |      ^^^^^^^^^^^^
+
+warning: struct `RdpWsSession` is never constructed
+  --> backend\src\ws\rdp.rs:26:8
+   |
+26 | struct RdpWsSession {
+   |        ^^^^^^^^^^^^
+
+warning: associated function `new` is never used
+  --> backend\src\ws\rdp.rs:32:8
+   |
+31 | impl RdpWsSession {
+   | ----------------- associated function in this implementation
+32 |     fn new(screen_width: u32, screen_height: u32) -> anyhow::Result<Self> {
+   |        ^^^
+
+warning: function `rdp_ws_handler` is never used
+  --> backend\src\ws\rdp.rs:42:14
+   |
+42 | pub async fn rdp_ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
+   |              ^^^^^^^^^^^^^^
+
+warning: function `handle_rdp_socket` is never used
+  --> backend\src\ws\rdp.rs:46:10
+   |
+46 | async fn handle_rdp_socket(mut socket: WebSocket) {
+   |          ^^^^^^^^^^^^^^^^^
+
+warning: `backend` (bin "backend") generated 43 warnings (run `cargo fix --bin "backend" -p backend` to apply 17 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.09s
+     Running `D:\Code\remote-dev\target\debug\backend.exe`
+error: process didn't exit successfully: `D:\Code\remote-dev\target\debug\backend.exe` (exit code: 1073807364)

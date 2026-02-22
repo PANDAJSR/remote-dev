@@ -28,10 +28,19 @@ async fn main() {
 
     let app = create_router(watcher_manager, watch_tx);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
-    println!("Server running on http://localhost:3001");
-    println!("WebSocket endpoint: ws://localhost:3001/ws");
-    println!("File watch WebSocket endpoint: ws://localhost:3001/ws/files");
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:3003").await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Failed to bind to port 3003: {}", e);
+            std::process::exit(1);
+        }
+    };
+    println!("Server running on http://localhost:3003");
+    println!("WebSocket endpoint: ws://localhost:3003/ws");
+    println!("File watch WebSocket endpoint: ws://localhost:3003/ws/files");
 
-    axum::serve(listener, app).await.unwrap();
+    if let Err(e) = axum::serve(listener, app).await {
+        eprintln!("Server error: {}", e);
+        std::process::exit(1);
+    }
 }

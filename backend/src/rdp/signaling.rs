@@ -171,21 +171,139 @@ pub struct ServerInfo {
     pub supports_webrtc: bool,
     pub screen_width: u32,
     pub screen_height: u32,
+    pub status: String,
+    pub message: String,
+}
+
+/// 服务器状态
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerStatus {
+    pub healthy: bool,
+    pub display_available: bool,
+    pub message: String,
 }
 
 pub async fn get_server_info() -> JsonResponse<ServerInfo> {
-    // 获取屏幕分辨率
-    use scrap::Display;
-    let (width, height) = match Display::primary() {
-        Ok(display) => (display.width() as u32, display.height() as u32),
-        Err(_) => (1920, 1080),
+    println!("[RDP] Received server info request");
+    
+    // 使用健壮的方式获取服务器信息
+    let server_status = check_server_health().await;
+    
+    // 获取屏幕分辨率（带多层错误处理）
+    let (width, height) = match get_display_resolution_with_fallback().await {
+        Ok((w, h)) => {
+            println!("[RDP] Display resolution obtained: {}x{}", w, h);
+            (w, h)
+        }
+        Err(e) => {
+            eprintln!("[RDP] Failed to get display resolution: {}, using defaults", e);
+            (1920, 1080)
+        }
     };
+    
+    // 验证分辨率的合理性
+    let (validated_width, validated_height) = validate_resolution(width, height);
 
-    JsonResponse(ServerInfo {
+    let response = ServerInfo {
         supports_webrtc: true,
-        screen_width: width,
-        screen_height: height,
-    })
+        screen_width: validated_width,
+        screen_height: validated_height,
+        status: if server_status.healthy { "ok".to_string() } else { "degraded".to_string() },
+        message: if server_status.display_available {
+            "Server ready".to_string()
+        } else {
+            "Server ready (simulated display mode)".to_string()
+        },
+    };
+    
+    println!("[RDP] Server info response: {:?}", response);
+    JsonResponse(response)
+}
+
+/// 异步检查服务器健康状态
+async fn check_server_health() -> ServerStatus {
+    // 检查显示是否可用
+    let display_available = tokio::task::spawn_blocking(|| {
+        use scrap::Display;
+        Display::primary().is_ok()
+    }).await.unwrap_or(false);
+    
+    ServerStatus {
+        healthy: true,
+        display_available,
+        message: if display_available {
+            "All systems operational".to_string()
+        } else {
+            "Running in simulated mode".to_string()
+        },
+    }
+}
+
+/// 异步获取显示器分辨率，带超时和回退机制
+async fn get_display_resolution_with_fallback() -> anyhow::Result<(u32, u32)> {
+    // 使用超时机制避免无限等待
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::task::spawn_blocking(|| get_display_resolution_safe())
+    ).await;
+    
+    match result {
+        Ok(Ok(resolution)) => Ok(resolution),
+        Ok(Err(e)) => {
+            eprintln!("[RDP] Display detection failed: {}", e);
+            Ok((1920, 1080))
+        }
+        Err(_) => {
+            eprintln!("[RDP] Display detection timed out, using defaults");
+            Ok((1920, 1080))
+        }
+    }
+}
+
+/// 安全地获取显示器分辨率，在无显示器环境中返回默认值
+fn get_display_resolution_safe() -> (u32, u32) {
+    use scrap::Display;
+    
+    // 尝试获取主显示器，失败时使用默认分辨率
+    match Display::primary() {
+        Ok(display) => {
+            let w = display.width() as u32;
+            let h = display.height() as u32;
+            
+            // 验证获取的分辨率是否合理
+            if w > 0 && h > 0 && w <= 8192 && h <= 8192 {
+                println!("[RDP] Detected display resolution: {}x{}", w, h);
+                (w, h)
+            } else {
+                println!("[RDP] Invalid display resolution detected ({}x{}), using default", w, h);
+                (1920, 1080)
+            }
+        }
+        Err(e) => {
+            println!("[RDP] No display detected ({}), using default resolution 1920x1080", e);
+            // 默认使用 1920x1080
+            (1920, 1080)
+        }
+    }
+}
+
+/// 验证分辨率是否在合理范围内
+fn validate_resolution(width: u32, height: u32) -> (u32, u32) {
+    const MIN_RES: u32 = 320;
+    const MAX_RES: u32 = 7680; // 8K
+    
+    let validated_width = width.clamp(MIN_RES, MAX_RES);
+    let validated_height = height.clamp(MIN_RES, MAX_RES);
+    
+    // 确保是偶数（某些编码器的要求）
+    let validated_width = validated_width & !1;
+    let validated_height = validated_height & !1;
+    
+    if validated_width != width || validated_height != height {
+        println!("[RDP] Resolution adjusted from {}x{} to {}x{}", width, height, validated_width, validated_height);
+    }
+    
+    (validated_width, validated_height)
 }
 
 /// 创建信令路由

@@ -69,6 +69,39 @@
   font-family: monospace;
 }
 
+.rdp-toolbar-right {
+  display: flex;
+  align-items: center;
+}
+
+.rdp-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  background: #1e1e1e;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.rdp-stat-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rdp-stat-label {
+  color: #858585;
+}
+
+.rdp-stat-value {
+  color: #4caf50;
+  font-weight: 600;
+  font-family: monospace;
+  min-width: 20px;
+  text-align: right;
+}
+
 .rdp-video-container {
   flex: 1;
   display: flex;

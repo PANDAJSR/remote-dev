@@ -1,0 +1,24 @@
+{
+  "name": "remote-dev",
+  "version": "1.0.0",
+  "description": "这是一个使用 Rust (Axum) 作为后端，React + Vite 作为前端的全栈应用模板。",
+  "main": "take_screenshot.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PANDAJSR/remote-dev.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/PANDAJSR/remote-dev/issues"
+  },
+  "homepage": "https://github.com/PANDAJSR/remote-dev#readme",
+  "dependencies": {
+    "playwright": "^1.58.2"
+  }
+}

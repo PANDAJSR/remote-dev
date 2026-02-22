@@ -13,6 +13,14 @@ interface ServerInfo {
   screen_height: number;
 }
 
+interface VideoStats {
+  fps: number;
+  bitrate: number; // kbps
+  resolution: string;
+  framesDecoded: number;
+  packetsLost: number;
+}
+
 type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 export const RemoteDesktopPanel = (props: RemoteDesktopProps) => {
@@ -21,26 +29,106 @@ export const RemoteDesktopPanel = (props: RemoteDesktopProps) => {
   const [connectionState, setConnectionState] = useState<ConnectionState>('connecting');
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const [sessionId, setSessionId] = useState<string>('');
-
+  const [videoStats, setVideoStats] = useState<VideoStats>({
+    fps: 0,
+    bitrate: 0,
+    resolution: '-',
+    framesDecoded: 0,
+    packetsLost: 0
+  });
+  
+  // 自动重连相关状态
+  const [retryCount, setRetryCount] = useState(0);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [blackScreenDetected, setBlackScreenDetected] = useState(false);
+  const maxRetries = 3;
+  
   const serverUrl = props.params?.serverUrl || `${window.location.protocol}//${window.location.host}`;
+
+  // 自动重连逻辑 - 检测黑屏并自动重试
+  useEffect(() => {
+    if (connectionState === 'connected' && !isRetrying) {
+      // 连接成功后，检查视频是否真的有画面
+      const checkVideoHealth = setInterval(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        
+        // 检测黑屏：连接成功但视频尺寸为0或帧率为0
+        const hasVideo = video.videoWidth > 0 && video.videoHeight > 0;
+        const hasFrames = videoStats.framesDecoded > 0;
+        const hasBitrate = videoStats.bitrate > 0;
+        
+        console.log('[Health Check] Video:', hasVideo, 'Frames:', hasFrames, 'Bitrate:', hasBitrate, 
+          'Resolution:', video.videoWidth + 'x' + video.videoHeight);
+        
+        // 如果连接成功但没有视频数据，认为是黑屏
+        if (!hasVideo || (!hasFrames && !hasBitrate)) {
+          console.warn('[Health Check] Black screen detected! Video connected but no data.');
+          setBlackScreenDetected(true);
+          
+          if (retryCount < maxRetries) {
+            console.log(`[Health Check] Retrying connection... (${retryCount + 1}/${maxRetries})`);
+            setIsRetrying(true);
+            setRetryCount(prev => prev + 1);
+            
+            // 清理当前连接并重新连接
+            cleanup();
+            setConnectionState('connecting');
+            
+            // 延迟后重新初始化 - 使用新的会话
+            setTimeout(() => {
+              window.location.reload(); // 简单刷新页面重新连接
+            }, 1500);
+          } else {
+            console.error('[Health Check] Max retries reached, giving up.');
+            setConnectionState('error');
+          }
+        } else {
+          // 视频正常，重置重试计数
+          if (retryCount > 0) {
+            console.log('[Health Check] Video is healthy, resetting retry count');
+            setRetryCount(0);
+            setBlackScreenDetected(false);
+            setIsRetrying(false);
+          }
+        }
+      }, 3000); // 每3秒检查一次
+      
+      return () => clearInterval(checkVideoHealth);
+    }
+  }, [connectionState, videoStats, retryCount, isRetrying]);
 
   // 获取服务器信息并创建会话
   useEffect(() => {
+    // 防止重复创建会话的标志
+    let isCancelled = false;
+    let sessionCreated = false;
+    
     const initWebRTC = async () => {
       try {
         // 1. 获取服务器信息
         const infoRes = await fetch(`${serverUrl}/api/rdp/info`);
         const info = await infoRes.json();
+        if (isCancelled) return;
+        
         setServerInfo(info);
         console.log('Server info:', info);
 
         // 2. 创建会话
+        if (sessionCreated) {
+          console.log('Session already created, skipping...');
+          return;
+        }
+        sessionCreated = true;
+        
         const sessionRes = await fetch(`${serverUrl}/api/rdp/session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fps: 30 }),
         });
         const sessionData = await sessionRes.json();
+        
+        if (isCancelled) return;
         
         if (!sessionData.session_id) {
           throw new Error('Failed to create session');
@@ -53,13 +141,16 @@ export const RemoteDesktopPanel = (props: RemoteDesktopProps) => {
         await createPeerConnection(sessionData.session_id);
       } catch (error) {
         console.error('Failed to initialize WebRTC:', error);
-        setConnectionState('error');
+        if (!isCancelled) {
+          setConnectionState('error');
+        }
       }
     };
 
     initWebRTC();
 
     return () => {
+      isCancelled = true;
       cleanup();
     };
   }, [serverUrl]);
@@ -79,11 +170,13 @@ export const RemoteDesktopPanel = (props: RemoteDesktopProps) => {
       (window as any).webrtcPC = pc;
 
       // 处理远程视频流
+      let mediaStream: MediaStream | null = null;
       pc.ontrack = (event) => {
         console.log('Received remote track:', event.streams);
         if (videoRef.current && event.streams[0]) {
-          videoRef.current.srcObject = event.streams[0];
-          setConnectionState('connected');
+          mediaStream = event.streams[0];
+          videoRef.current.srcObject = mediaStream;
+          console.log('Video srcObject set, waiting for connection to play...');
         }
       };
 
@@ -92,6 +185,19 @@ export const RemoteDesktopPanel = (props: RemoteDesktopProps) => {
         console.log('Connection state:', pc.connectionState);
         if (pc.connectionState === 'connected') {
           setConnectionState('connected');
+          // 连接成功后播放视频
+          if (videoRef.current && videoRef.current.srcObject) {
+            console.log('Connection connected, playing video...');
+            videoRef.current.play().then(() => {
+              console.log('Video playing successfully');
+            }).catch(e => {
+              console.error('Video play failed:', e);
+              // 重试播放
+              setTimeout(() => {
+                videoRef.current?.play().catch(e2 => console.error('Video play retry failed:', e2));
+              }, 500);
+            });
+          }
           // 开始收集统计信息
           startStatsCollection(pc);
         } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
@@ -196,60 +302,58 @@ export const RemoteDesktopPanel = (props: RemoteDesktopProps) => {
   };
 
   const startStatsCollection = (pc: RTCPeerConnection) => {
+    let lastStats: any = null;
+    let lastTimestamp = 0;
+    
     const collectStats = async () => {
       try {
         const stats = await pc.getStats();
-        const videoStats: any[] = [];
-        const codecStats: any[] = [];
+        let currentStats: any = null;
         
         stats.forEach((stat) => {
           if (stat.type === 'inbound-rtp' && stat.kind === 'video') {
-            videoStats.push({
-              timestamp: stat.timestamp,
-              bytesReceived: stat.bytesReceived,
-              packetsReceived: stat.packetsReceived,
-              packetsLost: stat.packetsLost,
-              framesDecoded: stat.framesDecoded,
-              framesReceived: stat.framesReceived,
-              framesDropped: stat.framesDropped,
-              frameWidth: stat.frameWidth,
-              frameHeight: stat.frameHeight,
-              jitter: stat.jitter,
-              codecId: stat.codecId
-            });
-          }
-          if (stat.type === 'codec') {
-            codecStats.push({
-              id: stat.id,
-              mimeType: stat.mimeType,
-              clockRate: stat.clockRate,
-              sdpFmtpLine: stat.sdpFmtpLine
-            });
-          }
-          if (stat.type === 'track' && stat.kind === 'video') {
-            console.log('Track stats:', {
-              framesReceived: stat.framesReceived,
-              framesDecoded: stat.framesDecoded,
-              framesDropped: stat.framesDropped
-            });
+            currentStats = stat;
           }
         });
         
-        if (videoStats.length > 0) {
-          console.log('Video inbound stats:', videoStats[0]);
+        if (currentStats) {
+          const now = currentStats.timestamp;
+          
+          if (lastStats && lastTimestamp > 0) {
+            const timeDelta = (now - lastTimestamp) / 1000; // 转换为秒
+            
+            if (timeDelta > 0) {
+              // 计算帧率 (FPS)
+              const framesDelta = currentStats.framesDecoded - lastStats.framesDecoded;
+              const fps = Math.round(framesDelta / timeDelta);
+              
+              // 计算码率 (kbps)
+              const bytesDelta = currentStats.bytesReceived - lastStats.bytesReceived;
+              const bitrate = Math.round((bytesDelta * 8) / timeDelta / 1000);
+              
+              // 更新状态
+              setVideoStats({
+                fps: fps,
+                bitrate: bitrate,
+                resolution: currentStats.frameWidth && currentStats.frameHeight 
+                  ? `${currentStats.frameWidth}x${currentStats.frameHeight}`
+                  : '-',
+                framesDecoded: currentStats.framesDecoded,
+                packetsLost: currentStats.packetsLost || 0
+              });
+            }
+          }
+          
+          lastStats = currentStats;
+          lastTimestamp = now;
         }
-        if (codecStats.length > 0) {
-          console.log('Codec stats:', codecStats);
-        }
-        
-        (window as any).webrtcStats = { video: videoStats, codecs: codecStats };
       } catch (e) {
         console.error('Failed to get stats:', e);
       }
     };
     
-    // 每5秒收集一次统计信息
-    const interval = setInterval(collectStats, 5000);
+    // 每秒收集一次统计信息以计算实时帧率和码率
+    const interval = setInterval(collectStats, 1000);
     
     // 立即收集一次
     setTimeout(collectStats, 1000);
@@ -286,6 +390,28 @@ export const RemoteDesktopPanel = (props: RemoteDesktopProps) => {
             </span>
           )}
         </div>
+        <div className="rdp-toolbar-right">
+          {connectionState === 'connected' && (
+            <div className="rdp-stats">
+              <span className="rdp-stat-item" title="帧率">
+                <span className="rdp-stat-label">FPS:</span>
+                <span className="rdp-stat-value">{videoStats.fps}</span>
+              </span>
+              <span className="rdp-stat-item" title="码率">
+                <span className="rdp-stat-label">码率:</span>
+                <span className="rdp-stat-value">{videoStats.bitrate} kbps</span>
+              </span>
+              <span className="rdp-stat-item" title="分辨率">
+                <span className="rdp-stat-label">分辨率:</span>
+                <span className="rdp-stat-value">{videoStats.resolution}</span>
+              </span>
+              <span className="rdp-stat-item" title="丢包">
+                <span className="rdp-stat-label">丢包:</span>
+                <span className="rdp-stat-value">{videoStats.packetsLost}</span>
+              </span>
+            </div>
+          )}
+        </div>
       </div>
       
       <div className="rdp-video-container">
@@ -293,6 +419,7 @@ export const RemoteDesktopPanel = (props: RemoteDesktopProps) => {
           ref={videoRef}
           autoPlay
           playsInline
+          muted
           className="rdp-video"
         />
       </div>

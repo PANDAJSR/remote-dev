@@ -88,7 +88,6 @@ pub struct RdpSession {
     pub peer_connection: Arc<RTCPeerConnection>,
     video_track: Arc<TrackLocalStaticSample>,
     ice_candidates: Arc<Mutex<Vec<IceCandidate>>>,
-    frame_sender: mpsc::Sender<Vec<u8>>,
 }
 
 impl RdpSession {
@@ -122,18 +121,19 @@ impl RdpSession {
 
         let peer_connection = Arc::new(api.new_peer_connection(config).await?);
 
-        // 创建 H.264 视频轨道
+        println!("[RDP] Creating H.264 video track...");
         let video_track = Arc::new(TrackLocalStaticSample::new(
             RTCRtpCodecCapability {
                 mime_type: "video/H264".to_owned(),
                 clock_rate: 90000,
                 channels: 0,
-                sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".to_owned(),
+                sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e028".to_owned(),
                 rtcp_feedback: vec![],
             },
             "rdp-video".to_owned(),
             "remote-desktop".to_owned(),
         ));
+        println!("[RDP] Video track created: codec=H264, profile-level-id=42e028");
 
         // 添加轨道到 PeerConnection
         let rtp_sender = peer_connection
@@ -148,14 +148,15 @@ impl RdpSession {
             }
         });
 
-        // 创建帧发送通道
-        let (frame_sender, mut frame_receiver) = mpsc::channel::<Vec<u8>>(100);
         let track_clone = Arc::clone(&video_track);
+        let pc_clone_for_capture = Arc::clone(&peer_connection);
+        let session_id_for_task = session_id.clone();
 
         // 启动屏幕捕获和发送
         tokio::spawn(async move {
-            if let Err(e) = Self::capture_and_send(track_clone, &mut frame_receiver).await {
-                eprintln!("Capture error: {}", e);
+            println!("[RDP] Starting capture task for session {}", session_id_for_task);
+            if let Err(e) = Self::capture_and_send(track_clone, pc_clone_for_capture).await {
+                eprintln!("[RDP] Capture error for session {}: {}", session_id_for_task, e);
             }
         });
 
@@ -184,12 +185,15 @@ impl RdpSession {
         // 监听连接状态
         let pc_clone = Arc::clone(&peer_connection);
         peer_connection.on_peer_connection_state_change(Box::new(move |state| {
-            println!("PeerConnection state: {:?}", state);
+            println!("[RDP] PeerConnection state: {:?}", state);
             if state == RTCPeerConnectionState::Failed {
                 let pc = Arc::clone(&pc_clone);
                 Box::pin(async move {
                     let _ = pc.close().await;
                 })
+            } else if state == RTCPeerConnectionState::Connected {
+                println!("[RDP] Connection established, video streaming should start");
+                Box::pin(async {})
             } else {
                 Box::pin(async {})
             }
@@ -200,7 +204,6 @@ impl RdpSession {
             peer_connection,
             video_track,
             ice_candidates,
-            frame_sender,
         })
     }
 
@@ -249,105 +252,210 @@ impl RdpSession {
     /// 屏幕捕获和发送视频帧
     async fn capture_and_send(
         track: Arc<TrackLocalStaticSample>,
-        _receiver: &mut mpsc::Receiver<Vec<u8>>,
+        peer_connection: Arc<RTCPeerConnection>,
     ) -> anyhow::Result<()> {
-        println!("[CAPTURE] Starting capture_and_send...");
-        
+        println!("[WEBRTC] =========================================");
+        println!("[WEBRTC] Starting capture_and_send pipeline...");
+        println!("[WEBRTC] PeerConnection state at start: {:?}", peer_connection.connection_state());
+        println!("[WEBRTC] ICE state at start: {:?}", peer_connection.ice_connection_state());
+
         // 初始化屏幕捕获
         let capture = match ScreenCapture::new() {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[CAPTURE] Failed to initialize screen capture: {}", e);
+                eprintln!("[WEBRTC] FATAL: Failed to initialize screen capture: {}", e);
                 return Err(e);
             }
         };
-        
+
         let (width, height) = capture.dimensions();
-        println!("[CAPTURE] Screen capture initialized: {}x{} @ 30 FPS", width, height);
-        
+        const TARGET_FPS: u32 = 30;
+        println!("[WEBRTC] Screen capture initialized: {}x{} @ {} FPS", width, height, TARGET_FPS);
+        println!("[WEBRTC] Track ID: remote-desktop");
+
         // 创建帧通道
-        let (frame_tx, mut frame_rx) = mpsc::channel(30);
-        
-        // 启动屏幕捕获 (30 FPS)
-        capture.start_capture(frame_tx, 30);
-        println!("[CAPTURE] Screen capture started");
-        
-        // 初始化 H.264 编码器 (2 Mbps bitrate)
-        println!("[CAPTURE] Initializing H.264 encoder...");
-        let mut encoder = match Vp8Encoder::new(width, height, 2_000_000) {
+        let (frame_tx, mut frame_rx) = mpsc::channel(60);
+
+        // P1 Fix: 启动屏幕捕获（使用单例模式，支持多会话共享）
+        capture.start_capture(frame_tx, TARGET_FPS).await;
+        println!("[WEBRTC] Screen capture started (singleton mode)");
+
+        // P1 Fix: 提高码率到 8Mbps 以获得更好的质量和帧率
+        const TARGET_BITRATE: u32 = 8_000_000;
+        println!("[WEBRTC] Initializing H.264 encoder (bitrate: {}Mbps)...", TARGET_BITRATE / 1_000_000);
+        let mut encoder = match Vp8Encoder::new(width, height, TARGET_BITRATE) {
             Ok(enc) => {
-                println!("[CAPTURE] H.264 encoder initialized successfully");
+                println!("[WEBRTC] H.264 encoder initialized successfully");
                 enc
             }
             Err(e) => {
-                eprintln!("[CAPTURE] Failed to initialize H.264 encoder: {}", e);
+                eprintln!("[WEBRTC] FATAL: Failed to initialize H.264 encoder: {}", e);
                 return Err(e);
             }
         };
-        
+
         let mut frame_count = 0u64;
         let mut encoded_count = 0u64;
         let mut error_count = 0u64;
-        let mut last_fps_print = std::time::Instant::now();
-        
-        println!("[CAPTURE] Entering frame processing loop...");
+        let mut last_stats_time = std::time::Instant::now();
+        let mut total_bytes_sent = 0u64;
+        let mut no_connection_frames = 0u64;
+
+        println!("[WEBRTC] Entering frame processing loop...");
+        println!("[WEBRTC] Waiting for WebRTC connection...");
         
         // 处理捕获的帧并发送
+        let mut timestamp = std::time::Instant::now();
+        let start_time = std::time::Instant::now();
+        
         while let Some(frame) = frame_rx.recv().await {
             frame_count += 1;
+
+            let conn_state = peer_connection.connection_state();
+            let ice_state = peer_connection.ice_connection_state();
+            let signaling_state = peer_connection.signaling_state();
             
+            let should_send = conn_state == RTCPeerConnectionState::Connected 
+                || conn_state == RTCPeerConnectionState::Connecting
+                || ice_state == webrtc::ice_transport::ice_connection_state::RTCIceConnectionState::Connected
+                || ice_state == webrtc::ice_transport::ice_connection_state::RTCIceConnectionState::Completed
+                || ice_state == webrtc::ice_transport::ice_connection_state::RTCIceConnectionState::Checking
+                || (signaling_state == webrtc::peer_connection::signaling_state::RTCSignalingState::Stable 
+                    && ice_state != webrtc::ice_transport::ice_connection_state::RTCIceConnectionState::New
+                    && ice_state != webrtc::ice_transport::ice_connection_state::RTCIceConnectionState::Failed);
+                
+            if !should_send {
+                no_connection_frames += 1;
+                if no_connection_frames % 60 == 1 {
+                    println!("[WEBRTC] Waiting for WebRTC connection...");
+                    println!("[WEBRTC]   Connection state: {:?}", conn_state);
+                    println!("[WEBRTC]   ICE state: {:?}", ice_state);
+                    println!("[WEBRTC]   Signaling state: {:?}", signaling_state);
+                    println!("[WEBRTC]   Frames received while waiting: {}", no_connection_frames);
+                }
+                continue;
+            } else if no_connection_frames > 0 {
+                println!("[WEBRTC] Connection established! Resuming transmission.");
+                println!("[WEBRTC]   Connection state: {:?}", conn_state);
+                println!("[WEBRTC]   ICE state: {:?}", ice_state);
+                no_connection_frames = 0;
+            }
+
             if frame_count % 30 == 0 {
-                println!("[CAPTURE] Received {} frames so far", frame_count);
+                println!("[WEBRTC] Pipeline stats: {} frames received, {} encoded, {} errors",
+                    frame_count, encoded_count, error_count);
             }
             
-            // 编码帧: BGRA -> I420 -> H.264
+            // 阶段3: 编码 (BGRA -> I420 -> H.264)
+            println!("[WEBRTC] Stage 3: Encoding frame {}...", frame_count);
             match encoder.encode_frame(&frame) {
                 Ok(encoded_data) => {
                     if !encoded_data.is_empty() {
                         encoded_count += 1;
-                        
-                        // 创建 WebRTC 样本
+                        total_bytes_sent += encoded_data.len() as u64;
+
+                        // 分析H.264数据
+                        let is_keyframe = encoded_data.len() > 4 && (
+                            (encoded_data[4] & 0x1F) == 5 || // IDR slice
+                            (encoded_data[4] & 0x1F) == 7 || // SPS
+                            (encoded_data[4] & 0x1F) == 8    // PPS
+                        );
+
+                        if encoded_count <= 5 || encoded_count % 60 == 0 {
+                            let preview: Vec<u8> = encoded_data.iter().take(16).cloned().collect();
+                            println!("[WEBRTC] Encoded sample {}: {} bytes, keyframe: {}, nal_type: {:#04x}",
+                                encoded_count, encoded_data.len(), is_keyframe,
+                                if encoded_data.len() > 4 { encoded_data[4] } else { 0 });
+                        }
+
+                        // 阶段4: WebRTC传输
                         let sample = Sample {
                             data: Bytes::from(encoded_data),
-                            duration: Duration::from_millis(33), // ~30 FPS
+                            duration: Duration::from_millis(33), // ~30fps
                             ..Default::default()
                         };
-                        
-                        // 发送到 WebRTC
-                        if let Err(e) = track.write_sample(&sample).await {
-                            eprintln!("[CAPTURE] Failed to write sample to track: {}", e);
-                            // 连接可能已断开，退出循环
-                            break;
+
+                        let write_result = track.write_sample(&sample).await;
+                        match write_result {
+                            Ok(_) => {
+                                let should_log = encoded_count <= 5 || encoded_count % 30 == 0;
+                                if should_log {
+                                    println!("[WEBRTC] Sample written successfully #{} ({} bytes, is_keyframe: {})",
+                                        encoded_count, sample.data.len(), is_keyframe);
+                                }
+                                
+                                if is_keyframe {
+                                    println!("[WEBRTC] KEYFRAME #{} SENT successfully! Video should start rendering now.",
+                                        (encoded_count - 1) / 30 + 1);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[WEBRTC] FAILED to write sample #{}: {}", encoded_count, e);
+                                let state = peer_connection.connection_state();
+                                let ice_state = peer_connection.ice_connection_state();
+                                eprintln!("[WEBRTC] Connection state: {:?}, ICE state: {:?}", state, ice_state);
+                                
+                                if state == RTCPeerConnectionState::Failed ||
+                                   state == RTCPeerConnectionState::Closed {
+                                    eprintln!("[WEBRTC] Connection lost (state: {:?}), stopping capture", state);
+                                    break;
+                                }
+                            }
                         }
-                        
-                        if encoded_count % 30 == 0 {
-                            println!("[CAPTURE] Sent {} encoded frames", encoded_count);
-                        }
-                        
-                        // 每30秒打印一次 FPS
+
+                        // 每5秒打印一次统计信息
                         let now = std::time::Instant::now();
-                        if now.duration_since(last_fps_print).as_secs() >= 30 {
-                            let fps = encoded_count as f64 / now.duration_since(last_fps_print).as_secs_f64();
-                            println!("[CAPTURE] Screen capture FPS: {:.1}, total frames: {}, errors: {}", 
-                                fps, encoded_count, error_count);
-                            last_fps_print = now;
-                            encoded_count = 0;
+                        if now.duration_since(last_stats_time).as_secs() >= 5 {
+                            let elapsed_secs = now.duration_since(last_stats_time).as_secs_f64();
+                            let fps = encoded_count as f64 / elapsed_secs.max(1.0);
+                            let bitrate_kbps = (total_bytes_sent as f64 * 8.0 / elapsed_secs.max(1.0) / 1000.0) as u64;
+                            let error_rate = if frame_count > 0 {
+                                (error_count as f64 / frame_count as f64) * 100.0
+                            } else { 0.0 };
+
+                            println!("[WEBRTC] ===== 5-Second Statistics =====");
+                            println!("[WEBRTC] FPS: {:.1} (target: {})", fps, TARGET_FPS);
+                            println!("[WEBRTC] Bitrate: {} kbps", bitrate_kbps);
+                            println!("[WEBRTC] Frames: {} received, {} encoded, {} errors ({:.1}% error rate)",
+                                frame_count, encoded_count, error_count, error_rate);
+                            println!("[WEBRTC] Total bytes sent: {} ({:.1} MB)",
+                                total_bytes_sent, total_bytes_sent as f64 / 1_048_576.0);
+
+                            if fps < TARGET_FPS as f64 * 0.7 {
+                                println!("[WEBRTC] WARNING: FPS is below target! Check CPU usage and capture permissions.");
+                            }
+                            if error_rate > 10.0 {
+                                println!("[WEBRTC] WARNING: High error rate detected! Check encoding configuration.");
+                            }
+
+                            last_stats_time = now;
                         }
                     } else {
-                        println!("[CAPTURE] Encoded data is empty");
+                        println!("[WEBRTC] WARNING: Encoded data is EMPTY for frame {}", frame_count);
+                        error_count += 1;
                     }
                 }
                 Err(e) => {
                     error_count += 1;
-                    eprintln!("[CAPTURE] Frame encoding error ({} total): {}", error_count, e);
-                    // 编码失败，跳过该帧，继续处理下一帧
+                    eprintln!("[WEBRTC] Stage 3 FAILED - Encoding error ({} total): {}", error_count, e);
                     continue;
                 }
             }
         }
-        
-        println!("[CAPTURE] Screen capture stopped. Total frames received: {}, encoded: {}, errors: {}", 
-            frame_count, encoded_count, error_count);
+
+        // 最终统计
+        let total_time = std::time::Instant::now();
+        println!("[WEBRTC] =========================================");
+        println!("[WEBRTC] Capture pipeline STOPPED");
+        println!("[WEBRTC] Total frames received: {}", frame_count);
+        println!("[WEBRTC] Total frames encoded: {}", encoded_count);
+        println!("[WEBRTC] Total errors: {}", error_count);
+        println!("[WEBRTC] Total bytes sent: {} ({:.2} MB)",
+            total_bytes_sent, total_bytes_sent as f64 / 1_048_576.0);
+        if frame_count > 0 {
+            println!("[WEBRTC] Final error rate: {:.1}%", (error_count as f64 / frame_count as f64) * 100.0);
+        }
+        println!("[WEBRTC] =========================================");
         Ok(())
     }
 }
