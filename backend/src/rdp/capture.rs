@@ -1277,22 +1277,29 @@ impl Vp8Encoder {
     /// # Returns
     /// 编码后的 H.264 数据
     pub fn encode_frame(&mut self, frame: &CapturedFrame) -> anyhow::Result<Vec<u8>> {
-        println!("[ENCODE] Starting frame encoding: {}x{} ({} bytes BGRA)", 
-            frame.width, frame.height, frame.data.len());
-        let start_time = Instant::now();
-
-        let i420 = bgra_to_i420(&frame.data, frame.width, frame.height);
+        let total_start = Instant::now();
         
-        if i420.len() != (frame.width * frame.height * 3 / 2) {
-            eprintln!("[ENCODE] ERROR: I420 size mismatch! Expected {}, got {}",
-                frame.width * frame.height * 3 / 2, i420.len());
-        }
-
+        // 如果帧尺寸与编码器不匹配，进行缩放
+        let frame_data = if frame.width != self.width || frame.height != self.height {
+            resize_bgra(&frame.data, frame.width, frame.height, self.width, self.height)
+        } else {
+            frame.data.clone()
+        };
+        
+        // 性能分析：BGRA转I420
+        let convert_start = Instant::now();
+        let i420 = bgra_to_i420(&frame_data, self.width, self.height);
+        let convert_time = convert_start.elapsed();
+        
+        // 性能分析：H.264编码
+        let encode_start = Instant::now();
         let result = self.encode_i420(&i420);
+        let encode_time = encode_start.elapsed();
+        
+        let total_time = total_start.elapsed();
 
         match &result {
             Ok(data) => {
-                let elapsed = start_time.elapsed();
                 let is_keyframe = data.len() > 4 && (
                     (data[4] & 0x1F) == 5 || // IDR slice
                     (data[4] & 0x1F) == 7 || // SPS
@@ -1300,14 +1307,20 @@ impl Vp8Encoder {
                 );
                 
                 if data.is_empty() {
-                    eprintln!("[ENCODE] Frame #{} encoded in {:?}: {} bytes -> EMPTY, retry with keyframe also failed",
-                        self.frame_count, elapsed, frame.data.len());
+                    eprintln!("[ENCODE] Frame #{} FAILED: convert={:?}, encode={:?}, total={:?}",
+                        self.frame_count, convert_time, encode_time, total_time);
                 } else {
-                    println!("[ENCODE] Frame #{} encoded in {:?}: {} bytes -> {} bytes, keyframe={}",
-                        self.frame_count, elapsed, frame.data.len(), data.len(), is_keyframe);
+                    // 性能分析输出：显示各环节耗时
+                    println!("[ENCODE-PERF] Frame #{}: convert={:?}, encode={:?}, total={:?} | {} bytes -> {} bytes, keyframe={}",
+                        self.frame_count, convert_time, encode_time, total_time,
+                        frame.data.len(), data.len(), is_keyframe);
                     
-                    if data.len() < 100 {
-                        eprintln!("[ENCODE] WARNING: Encoded frame is suspiciously small ({} bytes)!", data.len());
+                    // 警告：如果转换或编码耗时过长
+                    if convert_time > Duration::from_millis(16) {
+                        eprintln!("[ENCODE-PERF] WARNING: Color conversion too slow! {:?} > 16ms", convert_time);
+                    }
+                    if encode_time > Duration::from_millis(16) {
+                        eprintln!("[ENCODE-PERF] WARNING: H.264 encoding too slow! {:?} > 16ms", encode_time);
                     }
                 }
             }

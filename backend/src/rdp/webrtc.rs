@@ -26,7 +26,8 @@ use bytes::Bytes;
 use std::time::Duration;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 
-use crate::rdp::capture::{ScreenCapture, Vp8Encoder};
+use crate::rdp::capture::ScreenCapture;
+use crate::rdp::ffmpeg_encoder::FFmpegEncoder;
 
 /// SDP Offer/Answer 数据结构
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -122,18 +123,21 @@ impl RdpSession {
         let peer_connection = Arc::new(api.new_peer_connection(config).await?);
 
         println!("[RDP] Creating H.264 video track...");
+        // profile-level-id=42001f = Baseline profile (42), Level 3.1 (001f)
+        // profile-level-id=42801f = Baseline profile (42), Level 4.0 (801f)
+        // 使用42001f以获得更好的兼容性
         let video_track = Arc::new(TrackLocalStaticSample::new(
             RTCRtpCodecCapability {
                 mime_type: "video/H264".to_owned(),
                 clock_rate: 90000,
                 channels: 0,
-                sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e028".to_owned(),
-                rtcp_feedback: vec![],
+                sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42801f".to_owned(),
+                rtcp_feedback: vec![], // 使用默认反馈
             },
             "rdp-video".to_owned(),
             "remote-desktop".to_owned(),
         ));
-        println!("[RDP] Video track created: codec=H264, profile-level-id=42e028");
+        println!("[RDP] Video track created: codec=H264, profile-level-id=42801f (Baseline Level 4.0)");
 
         // 添加轨道到 PeerConnection
         let rtp_sender = peer_connection
@@ -282,17 +286,31 @@ impl RdpSession {
 
         // P1 Fix: 提高码率到 8Mbps 以获得更好的质量和帧率
         const TARGET_BITRATE: u32 = 8_000_000;
-        println!("[WEBRTC] Initializing H.264 encoder (bitrate: {}Mbps)...", TARGET_BITRATE / 1_000_000);
-        let mut encoder = match Vp8Encoder::new(width, height, TARGET_BITRATE) {
+        println!("[WEBRTC] Initializing FFmpeg H.264 encoder (bitrate: {}Mbps)...", TARGET_BITRATE / 1_000_000);
+        let mut encoder = match FFmpegEncoder::new(width, height, TARGET_BITRATE) {
             Ok(enc) => {
-                println!("[WEBRTC] H.264 encoder initialized successfully");
+                println!("[WEBRTC] FFmpeg encoder initialized successfully: encoder_type={}", enc.encoder_type());
                 enc
             }
             Err(e) => {
-                eprintln!("[WEBRTC] FATAL: Failed to initialize H.264 encoder: {}", e);
+                eprintln!("[WEBRTC] FATAL: Failed to initialize FFmpeg encoder: {}", e);
                 return Err(e);
             }
         };
+
+        // 预热编码器：发送一帧测试数据让 NVENC 完成 GPU 初始化
+        // 这样当 WebRTC 连接建立后，编码器已经准备好了
+        println!("[WEBRTC] Warming up encoder with test frame...");
+        let warmup_start = std::time::Instant::now();
+        let test_frame = vec![0u8; width * height * 4]; // 黑色 BGRA 帧
+        match encoder.encode_frame(&test_frame) {
+            Ok(data) => {
+                println!("[WEBRTC] Encoder warm-up complete: {} bytes in {:?}", data.len(), warmup_start.elapsed());
+            }
+            Err(e) => {
+                eprintln!("[WEBRTC] Encoder warm-up failed: {}", e);
+            }
+        }
 
         let mut frame_count = 0u64;
         let mut encoded_count = 0u64;
@@ -348,24 +366,54 @@ impl RdpSession {
             
             // 阶段3: 编码 (BGRA -> I420 -> H.264)
             println!("[WEBRTC] Stage 3: Encoding frame {}...", frame_count);
-            match encoder.encode_frame(&frame) {
+            match encoder.encode_frame(&frame.data) {
                 Ok(encoded_data) => {
                     if !encoded_data.is_empty() {
                         encoded_count += 1;
                         total_bytes_sent += encoded_data.len() as u64;
 
-                        // 分析H.264数据
-                        let is_keyframe = encoded_data.len() > 4 && (
-                            (encoded_data[4] & 0x1F) == 5 || // IDR slice
-                            (encoded_data[4] & 0x1F) == 7 || // SPS
-                            (encoded_data[4] & 0x1F) == 8    // PPS
-                        );
+                        // 分析H.264数据 - 正确解析NAL起始码
+                        let is_keyframe = if encoded_data.len() >= 5 {
+                            // 检查是否有NAL起始码: 00 00 00 01 或 00 00 01
+                            let nal_type_pos = if encoded_data[0] == 0x00 && encoded_data[1] == 0x00 {
+                                if encoded_data[2] == 0x00 && encoded_data[3] == 0x01 {
+                                    4 // 4字节起始码
+                                } else if encoded_data[2] == 0x01 {
+                                    3 // 3字节起始码
+                                } else {
+                                    0 // 无前缀
+                                }
+                            } else {
+                                0 // 无前缀
+                            };
+                            
+                            if nal_type_pos < encoded_data.len() {
+                                let nal_type = encoded_data[nal_type_pos] & 0x1F;
+                                nal_type == 5 || nal_type == 7 || nal_type == 8 // IDR, SPS, PPS
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
 
                         if encoded_count <= 5 || encoded_count % 60 == 0 {
+                            // 计算NAL类型位置用于日志显示
+                            let nal_type_byte = if encoded_data.len() >= 5 && encoded_data[0] == 0x00 && encoded_data[1] == 0x00 {
+                                if encoded_data[2] == 0x00 && encoded_data[3] == 0x01 && encoded_data.len() > 4 {
+                                    encoded_data[4]
+                                } else if encoded_data[2] == 0x01 && encoded_data.len() > 3 {
+                                    encoded_data[3]
+                                } else {
+                                    0
+                                }
+                            } else {
+                                encoded_data.get(0).copied().unwrap_or(0)
+                            };
+                            
                             let preview: Vec<u8> = encoded_data.iter().take(16).cloned().collect();
-                            println!("[WEBRTC] Encoded sample {}: {} bytes, keyframe: {}, nal_type: {:#04x}",
-                                encoded_count, encoded_data.len(), is_keyframe,
-                                if encoded_data.len() > 4 { encoded_data[4] } else { 0 });
+                            println!("[WEBRTC] Encoded sample {}: {} bytes, keyframe: {}, nal_type: {:#04x} ({:?})",
+                                encoded_count, encoded_data.len(), is_keyframe, nal_type_byte, preview);
                         }
 
                         // 阶段4: WebRTC传输

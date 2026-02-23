@@ -1,4 +1,5 @@
-warning: unnecessary parentheses around assigned value
+Access is denied.
+y parentheses around assigned value
    --> backend\src\rdp\capture.rs:136:25
     |
 136 |             let b_avg = ((bgra[idx00] as i32 + bgra[idx01] as i32 + 
